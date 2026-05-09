@@ -99,6 +99,37 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// CHANGE PASSWORD
+router.patch("/change-password/:id", protect, async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    user.password = hashedPassword;
+
+    await user.save();
+
+    res.json({
+      message: "Password changed successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
 // GET ALL USERS (PROTECTED)
 router.get("/", protect, async (req, res) => {
   try {
