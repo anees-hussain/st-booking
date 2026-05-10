@@ -143,6 +143,21 @@ router.get("/", protect, async (req, res) => {
   }
 });
 
+// GET ALL Sellers publicly accessible
+router.get("/sellers", async (req, res) => {
+  try {
+    const users = await User.find({ designation: "seller" }).select(
+      "fullName _id",
+    );
+
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
 // GET SINGLE USER
 router.get("/:id", protect, async (req, res) => {
   try {

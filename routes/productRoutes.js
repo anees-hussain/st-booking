@@ -27,6 +27,25 @@ router.get("/", protect, async (req, res) => {
       createdAt: -1,
     });
 
+    console.log("Products retrieved:");
+
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
+// GET Active PRODUCTS for public use
+router.get("/active", async (req, res) => {
+  try {
+    const products = await Product.find({ isActive: true }).sort({
+      createdAt: -1,
+    });
+
+    console.log("Products retrieved:");
+
     res.json(products);
   } catch (error) {
     res.status(500).json({
@@ -92,6 +111,43 @@ router.delete("/:id", protect, async (req, res) => {
 
     res.json({
       message: "Product deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
+// UPDATE PRODUCT RATE
+router.put("/update-rate/:id", protect, async (req, res) => {
+  try {
+    const { rate } = req.body;
+
+    // VALIDATION
+    if (rate === undefined) {
+      return res.status(400).json({
+        message: "Rate is required",
+      });
+    }
+
+    // FIND PRODUCT
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
+
+    // UPDATE RATE
+    product.rate = rate;
+
+    await product.save();
+
+    res.json({
+      message: "Product rate updated successfully",
+      product,
     });
   } catch (error) {
     res.status(500).json({
