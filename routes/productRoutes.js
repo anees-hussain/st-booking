@@ -27,8 +27,6 @@ router.get("/", protect, async (req, res) => {
       createdAt: -1,
     });
 
-    console.log("Products retrieved:");
-
     res.json(products);
   } catch (error) {
     res.status(500).json({
@@ -43,8 +41,6 @@ router.get("/active", async (req, res) => {
     const products = await Product.find({ isActive: true }).sort({
       createdAt: -1,
     });
-
-    console.log("Products retrieved:");
 
     res.json(products);
   } catch (error) {
