@@ -9,8 +9,69 @@ const validator = require("validator");
 const Order = require("../models/Order");
 const protect = require("../middleware/authMiddleware");
 
-// GET ORDER FILTER OPTIONS
+// GET ORDER SHEET
+router.get("/ordersheet", protect, async (req, res) => {
+  try {
+    //
+    // FILTER OBJECT
+    //
 
+    const filter = {
+      status: "submitted",
+    };
+
+    //
+    // SELLER FILTER
+    //
+
+    if (req.query.seller) {
+      filter.seller = req.query.seller;
+    }
+
+    //
+    // DATE FILTER
+    //
+
+    if (req.query.date) {
+      const startDate = new Date(req.query.date);
+
+      startDate.setHours(0, 0, 0, 0);
+
+      const endDate = new Date(req.query.date);
+
+      endDate.setHours(23, 59, 59, 999);
+
+      filter.createdAt = {
+        $gte: startDate,
+        $lte: endDate,
+      };
+    }
+
+    //
+    // FETCH ORDERS
+    //
+
+    const orders = await Order.find(filter).sort({
+      createdAt: -1,
+    });
+
+    //
+    // RESPONSE
+    //
+
+    res.json({
+      orders,
+      totalOrders: orders.length,
+    });
+  } catch (error) {
+    console.error("Order Sheet Error:", error);
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
+// GET ORDER FILTER OPTIONS
 router.get("/summary", protect, async (req, res) => {
   try {
     const { startDate, endDate, status, seller, deliveryBy } = req.query;
@@ -86,8 +147,6 @@ router.get("/summary", protect, async (req, res) => {
     if (deliveryBy) {
       matchStage.deliveryBy = deliveryBy;
     }
-
-    console.log("Summary Match:", matchStage);
 
     //
     // PRODUCT SUMMARY
@@ -344,6 +403,7 @@ router.post("/", orderLimiter, async (req, res) => {
       orderId: savedOrder._id,
     });
   } catch (error) {
+    console.error("Create Order Error:", error);
     res.status(500).json({
       message: "Server error",
     });
@@ -470,6 +530,7 @@ router.get("/", protect, async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Get Orders Error:", error);
     res.status(500).json({
       message: error.message,
     });
@@ -537,6 +598,7 @@ router.put("/:id/status", protect, async (req, res) => {
 
     res.json(updatedOrder);
   } catch (error) {
+    console.error("Update Order Status Error:", error);
     res.status(500).json({
       message: error.message,
     });
@@ -556,6 +618,7 @@ router.get("/:id", protect, async (req, res) => {
 
     res.json(order);
   } catch (error) {
+    console.error("Get Single Order Error:", error);
     res.status(500).json({
       message: error.message,
     });
@@ -606,6 +669,7 @@ router.put("/:id", protect, async (req, res) => {
 
     res.json(updatedOrder);
   } catch (error) {
+    console.error("Update Order Error:", error);
     res.status(500).json({
       message: error.message,
     });
@@ -627,6 +691,7 @@ router.delete("/:id", protect, async (req, res) => {
       message: "Order deleted successfully",
     });
   } catch (error) {
+    console.error("Delete Order Error:", error);
     res.status(500).json({
       message: error.message,
     });
