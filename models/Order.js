@@ -2,6 +2,11 @@ const mongoose = require("mongoose");
 
 const orderDetailSchema = new mongoose.Schema(
   {
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      trim: true,
+    },
     productName: {
       type: String,
       required: true,
@@ -57,6 +62,32 @@ const orderSchema = new mongoose.Schema(
       trim: true,
     },
 
+    deliveryBy: {
+      type: String,
+      required: true,
+      trim: true,
+      default: "N/A",
+    },
+
+    acknowledgeBy: {
+      type: String,
+      required: true,
+      trim: true,
+      default: "N/A",
+    },
+
+    acknowledgeAt: {
+      type: Date,
+      required: false,
+      default: null,
+    },
+
+    postedBy: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
     detail: [orderDetailSchema],
 
     totalAmount: {
@@ -67,7 +98,7 @@ const orderSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["submitted", "delivered", "cancelled", "paid", "printed"],
+      enum: ["submitted", "delivered", "cancelled", "paid"],
       default: "submitted",
     },
   },
@@ -75,5 +106,15 @@ const orderSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+orderSchema.index({ seller: 1 });
+
+orderSchema.index({ status: 1 });
+
+orderSchema.index({ deliveryBy: 1 });
+
+orderSchema.index({ createdAt: -1 });
+
+orderSchema.index({ customerName: "text" });
 
 module.exports = mongoose.model("Order", orderSchema);

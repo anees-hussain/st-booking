@@ -9,11 +9,252 @@ const validator = require("validator");
 const Order = require("../models/Order");
 const protect = require("../middleware/authMiddleware");
 
+// GET ORDER FILTER OPTIONS
+
+router.get("/summary", protect, async (req, res) => {
+  try {
+    const { startDate, endDate, status, seller, deliveryBy } = req.query;
+
+    //
+    // SAFE DATE CREATOR
+    //
+
+    const createDate = (dateString, endOfDay = false) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+        throw new Error("Invalid date format. Use YYYY-MM-DD");
+      }
+
+      const [year, month, day] = dateString.split("-");
+
+      const date = new Date(Number(year), Number(month) - 1, Number(day));
+
+      if (isNaN(date.getTime())) {
+        throw new Error("Invalid date");
+      }
+
+      if (endOfDay) {
+        date.setHours(23, 59, 59, 999);
+      } else {
+        date.setHours(0, 0, 0, 0);
+      }
+
+      return date;
+    };
+
+    //
+    // MATCH FILTER
+    //
+
+    let matchStage = {};
+
+    //
+    // DATE FILTER
+    //
+
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+
+      if (startDate) {
+        matchStage.createdAt.$gte = createDate(startDate);
+      }
+
+      if (endDate) {
+        matchStage.createdAt.$lte = createDate(endDate, true);
+      }
+    }
+
+    //
+    // STATUS FILTER
+    //
+
+    if (status) {
+      matchStage.status = status;
+    }
+
+    //
+    // SELLER FILTER
+    //
+
+    if (seller) {
+      matchStage.seller = seller;
+    }
+
+    //
+    // DELIVERY FILTER
+    //
+
+    if (deliveryBy) {
+      matchStage.deliveryBy = deliveryBy;
+    }
+
+    console.log("Summary Match:", matchStage);
+
+    //
+    // PRODUCT SUMMARY
+    //
+
+    const summary = await Order.aggregate([
+      {
+        $match: {
+          ...matchStage,
+
+          detail: {
+            $exists: true,
+            $ne: [],
+          },
+        },
+      },
+
+      //
+      // BREAK PRODUCTS
+      //
+
+      {
+        $unwind: {
+          path: "$detail",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+
+      //
+      // GROUP PRODUCTS
+      //
+
+      {
+        $group: {
+          _id: {
+            productId: "$detail.productId",
+
+            productName: "$detail.productName",
+
+            uom: "$detail.uom",
+          },
+
+          //
+          // TOTAL PRODUCT QTY
+          //
+
+          totalQuantity: {
+            $sum: "$detail.quantity",
+          },
+
+          //
+          // TOTAL PRODUCT AMOUNT
+          //
+
+          totalAmount: {
+            $sum: {
+              $multiply: ["$detail.quantity", "$detail.rate"],
+            },
+          },
+
+          //
+          // UNIQUE ORDERS
+          //
+
+          orders: {
+            $addToSet: "$_id",
+          },
+        },
+      },
+
+      //
+      // CLEAN RESPONSE
+      //
+
+      {
+        $project: {
+          _id: 0,
+
+          productId: "$_id.productId",
+
+          productName: "$_id.productName",
+
+          uom: "$_id.uom",
+
+          totalQuantity: 1,
+
+          totalAmount: 1,
+
+          totalOrders: {
+            $size: "$orders",
+          },
+        },
+      },
+
+      //
+      // SORT
+      //
+
+      {
+        $sort: {
+          totalQuantity: -1,
+        },
+      },
+    ]);
+
+    return res.json(summary);
+  } catch (error) {
+    console.error("Summary Error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Server Error",
+    });
+  }
+});
+
+router.get("/filters/options", protect, async (req, res) => {
+  try {
+    //
+    // GET DISTINCT VALUES
+    //
+
+    const [statuses, sellers, deliveryBy] = await Promise.all([
+      Order.distinct("status"),
+
+      Order.distinct("seller"),
+
+      Order.distinct("deliveryBy"),
+    ]);
+
+    //
+    // CLEAN ARRAY
+    //
+
+    const cleanArray = (array) => {
+      return array
+        .filter((item) => item && item !== "N/A" && item.trim() !== "")
+        .sort((a, b) => a.localeCompare(b));
+    };
+
+    res.json({
+      statuses: cleanArray(statuses),
+
+      sellers: cleanArray(sellers),
+
+      deliveryBy: cleanArray(deliveryBy),
+    });
+  } catch (error) {
+    console.error("Filter Options Error:", error);
+
+    res.status(500).json({
+      message: error.message || "Server Error",
+    });
+  }
+});
+
 // CREATE ORDER
 router.post("/", orderLimiter, async (req, res) => {
   try {
-    const { customerName, address, phone, seller, detail, totalAmount } =
-      req.body;
+    const {
+      customerName,
+      address,
+      phone,
+      seller,
+      detail,
+      totalAmount,
+      postedBy,
+    } = req.body;
 
     //
     // BASIC VALIDATION
@@ -51,6 +292,7 @@ router.post("/", orderLimiter, async (req, res) => {
     //
 
     const cleanedDetail = detail.map((item) => ({
+      productId: item.productId,
       productName: String(item.productName || "").trim(),
 
       uom: String(item.uom || "").trim(),
@@ -86,6 +328,8 @@ router.post("/", orderLimiter, async (req, res) => {
 
       seller: seller.trim(),
 
+      postedBy: postedBy.trim(),
+
       detail: cleanedDetail,
 
       totalAmount,
@@ -106,11 +350,13 @@ router.post("/", orderLimiter, async (req, res) => {
   }
 });
 
-// GET ALL ORDERS WITH PAGINATION
+// GET ORDERS WITH PAGINATION + FILTERS
 
 router.get("/", protect, async (req, res) => {
   try {
+    //
     // QUERY PARAMS
+    //
 
     const page = Number(req.query.page) || 1;
 
@@ -118,18 +364,97 @@ router.get("/", protect, async (req, res) => {
 
     const skip = (page - 1) * limit;
 
+    //
+    // FILTER OBJECT
+    //
+
+    const filter = {};
+
+    //
+    // SELLER FILTER
+    //
+
+    if (req.query.seller) {
+      filter.seller = req.query.seller;
+    }
+
+    //
+    // STATUS FILTER
+    //
+
+    if (req.query.status) {
+      filter.status = req.query.status;
+    }
+
+    //
+    // DELIVERY BY FILTER
+    //
+
+    if (req.query.deliveryBy) {
+      filter.deliveryBy = req.query.deliveryBy;
+    }
+
+    //
+    // SEARCH
+    //
+
+    if (req.query.search) {
+      filter.$or = [
+        {
+          customerName: {
+            $regex: req.query.search,
+            $options: "i",
+          },
+        },
+
+        {
+          phone: {
+            $regex: req.query.search,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    //
+    // DATE FILTER
+    //
+
+    if (req.query.date) {
+      const startDate = new Date(req.query.date);
+
+      startDate.setHours(0, 0, 0, 0);
+
+      const endDate = new Date(req.query.date);
+
+      endDate.setHours(23, 59, 59, 999);
+
+      filter.createdAt = {
+        $gte: startDate,
+        $lte: endDate,
+      };
+    }
+
+    //
     // TOTAL COUNT
+    //
 
-    const totalOrders = await Order.countDocuments();
+    const totalOrders = await Order.countDocuments(filter);
 
+    //
     // FETCH ORDERS
+    //
 
-    const orders = await Order.find()
+    const orders = await Order.find(filter)
       .sort({
         createdAt: -1,
       })
       .skip(skip)
       .limit(limit);
+
+    //
+    // RESPONSE
+    //
 
     res.json({
       orders,
@@ -144,6 +469,73 @@ router.get("/", protect, async (req, res) => {
         hasMore: page * limit < totalOrders,
       },
     });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
+// UPDATE ORDER STATUS
+router.put("/:id/status", protect, async (req, res) => {
+  try {
+    const { status, deliveryBy } = req.body;
+
+    //
+    // VALIDATION
+    //
+
+    if (!status) {
+      return res.status(400).json({
+        message: "Status is required",
+      });
+    }
+
+    //
+    // UPDATE DATA
+    //
+
+    let updateData = {
+      status,
+    };
+
+    //
+    // DELIVERED
+    //
+
+    if (status === "delivered") {
+      if (!deliveryBy) {
+        return res.status(400).json({
+          message: "Delivery person is required",
+        });
+      }
+
+      updateData.deliveryBy = deliveryBy;
+    }
+
+    //
+    // CANCELLED
+    //
+
+    if (status === "cancelled") {
+      updateData.deliveryBy = "";
+    }
+
+    const updatedOrder = await Order.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      {
+        new: true,
+      },
+    );
+
+    if (!updatedOrder) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
+
+    res.json(updatedOrder);
   } catch (error) {
     res.status(500).json({
       message: error.message,
@@ -171,21 +563,46 @@ router.get("/:id", protect, async (req, res) => {
 });
 
 // UPDATE ORDER
+
 router.put("/:id", protect, async (req, res) => {
   try {
+    //
+    // FIND ORDER
+    //
+
+    const existingOrder = await Order.findById(req.params.id);
+
+    if (!existingOrder) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
+
+    //
+    // CHECK STATUS
+    //
+
+    if (
+      existingOrder.status === "delivered" ||
+      existingOrder.status === "cancelled"
+    ) {
+      return res.status(400).json({
+        message: "Delivered or cancelled orders cannot be updated",
+      });
+    }
+
+    //
+    // UPDATE ORDER
+    //
+
     const updatedOrder = await Order.findByIdAndUpdate(
       req.params.id,
       req.body,
       {
         new: true,
+        runValidators: true,
       },
     );
-
-    if (!updatedOrder) {
-      return res.status(404).json({
-        message: "Order not found",
-      });
-    }
 
     res.json(updatedOrder);
   } catch (error) {
@@ -215,361 +632,5 @@ router.delete("/:id", protect, async (req, res) => {
     });
   }
 });
-
-// ORDER SUMMARY
-
-// ORDER SUMMARY
-
-router.get(
-  "/summary",
-  protect,
-  async (req, res) => {
-    try {
-      const {
-        type,
-        startDate,
-        endDate,
-      } = req.query;
-
-      console.log(
-        "Summary request:",
-        {
-          type,
-          startDate,
-          endDate,
-        },
-      );
-
-      //
-      // VALID TYPES
-      //
-
-      const allowedTypes = [
-        "product",
-        "seller",
-        "status",
-      ];
-
-      if (
-        !type ||
-        !allowedTypes.includes(type)
-      ) {
-        return res.status(400).json({
-          message:
-            "Invalid summary type",
-        });
-      }
-
-      //
-      // SAFE DATE CREATOR
-      //
-
-      const createDate = (
-        dateString,
-        endOfDay = false,
-      ) => {
-        const [year, month, day] =
-          dateString.split("-");
-
-        const date = new Date(
-          Number(year),
-          Number(month) - 1,
-          Number(day),
-        );
-
-        if (endOfDay) {
-          date.setHours(
-            23,
-            59,
-            59,
-            999,
-          );
-        } else {
-          date.setHours(
-            0,
-            0,
-            0,
-            0,
-          );
-        }
-
-        return date;
-      };
-
-      //
-      // DATE FILTER
-      //
-
-      let matchStage = {};
-
-      if (startDate || endDate) {
-        matchStage.createdAt = {};
-
-        //
-        // ONLY START DATE
-        //
-
-        if (
-          startDate &&
-          !endDate
-        ) {
-          const start =
-            createDate(startDate);
-
-          const end = createDate(
-            startDate,
-            true,
-          );
-
-          matchStage.createdAt = {
-            $gte: start,
-            $lte: end,
-          };
-        }
-
-        //
-        // ONLY END DATE
-        //
-
-        if (
-          !startDate &&
-          endDate
-        ) {
-          const end = createDate(
-            endDate,
-            true,
-          );
-
-          matchStage.createdAt = {
-            $lte: end,
-          };
-        }
-
-        //
-        // DATE RANGE
-        //
-
-        if (
-          startDate &&
-          endDate
-        ) {
-          const start =
-            createDate(startDate);
-
-          const end = createDate(
-            endDate,
-            true,
-          );
-
-          matchStage.createdAt = {
-            $gte: start,
-            $lte: end,
-          };
-        }
-      }
-
-      console.log(
-        "Match stage:",
-        matchStage,
-      );
-
-      //
-      // SUMMARY BY PRODUCT
-      //
-
-      if (type === "product") {
-        const summary =
-          await Order.aggregate([
-            {
-              $match: {
-                ...matchStage,
-
-                detail: {
-                  $exists: true,
-                  $ne: [],
-                },
-              },
-            },
-
-            {
-              $unwind: {
-                path: "$detail",
-
-                preserveNullAndEmptyArrays: false,
-              },
-            },
-
-            {
-              $group: {
-                _id: {
-                  productName:
-                    "$detail.productName",
-
-                  uom: "$detail.uom",
-                },
-
-                totalQuantity: {
-                  $sum:
-                    "$detail.quantity",
-                },
-
-                totalAmount: {
-                  $sum: {
-                    $multiply: [
-                      "$detail.quantity",
-                      "$detail.rate",
-                    ],
-                  },
-                },
-
-                totalOrders: {
-                  $sum: 1,
-                },
-              },
-            },
-
-            {
-              $project: {
-                _id: 0,
-
-                productName:
-                  "$_id.productName",
-
-                uom: "$_id.uom",
-
-                totalQuantity: 1,
-
-                totalAmount: 1,
-
-                totalOrders: 1,
-              },
-            },
-
-            {
-              $sort: {
-                totalAmount: -1,
-              },
-            },
-          ]);
-
-        return res.json(summary);
-      }
-
-      //
-      // SUMMARY BY SELLER
-      //
-
-      if (type === "seller") {
-        const summary =
-          await Order.aggregate([
-            {
-              $match: matchStage,
-            },
-
-            {
-              $group: {
-                _id: "$seller",
-
-                totalOrders: {
-                  $sum: 1,
-                },
-
-                totalAmount: {
-                  $sum:
-                    "$totalAmount",
-                },
-              },
-            },
-
-            {
-              $project: {
-                _id: 0,
-
-                seller: "$_id",
-
-                totalOrders: 1,
-
-                totalAmount: 1,
-              },
-            },
-
-            {
-              $sort: {
-                totalAmount: -1,
-              },
-            },
-          ]);
-
-        return res.json(summary);
-      }
-
-      //
-      // SUMMARY BY STATUS
-      //
-
-      if (type === "status") {
-        const summary =
-          await Order.aggregate([
-            {
-              $match: matchStage,
-            },
-
-            {
-              $group: {
-                _id: "$status",
-
-                totalOrders: {
-                  $sum: 1,
-                },
-
-                totalAmount: {
-                  $sum:
-                    "$totalAmount",
-                },
-              },
-            },
-
-            {
-              $project: {
-                _id: 0,
-
-                status: "$_id",
-
-                totalOrders: 1,
-
-                totalAmount: 1,
-              },
-            },
-
-            {
-              $sort: {
-                totalOrders: -1,
-              },
-            },
-          ]);
-
-        return res.json(summary);
-      }
-
-      //
-      // FALLBACK
-      //
-
-      return res.status(400).json({
-        message:
-          "Invalid summary request",
-      });
-    } catch (error) {
-      console.error(
-        "Summary error:",
-        error,
-      );
-
-      res.status(500).json({
-        message: error.message,
-      });
-    }
-  },
-);
 
 module.exports = router;
