@@ -302,6 +302,129 @@ router.get("/filters/options", protect, async (req, res) => {
   }
 });
 
+//
+// GET PAID ORDERS REPORT
+//
+
+router.get("/reports/paid", protect, async (req, res) => {
+  try {
+    const { startDate, endDate, byProduct } = req.query;
+
+    //
+    // VALIDATION
+    //
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        message: "Start date and end date are required",
+      });
+    }
+
+    //
+    // DATE FILTER
+    //
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    //
+    // BASE FILTER
+    //
+
+    const filter = {
+      acknowledgeAt: {
+        $ne: null,
+        $gte: start,
+        $lte: end,
+      },
+    };
+
+    //
+    // GROUP BY PRODUCT
+    //
+
+    if (byProduct === "true") {
+      const groupedProducts = await Order.aggregate([
+        {
+          $match: filter,
+        },
+
+        //
+        // UNWIND PRODUCTS ARRAY
+        //
+
+        {
+          $unwind: "$detail",
+        },
+
+        //
+        // GROUP DATA
+        //
+
+        {
+          $group: {
+            _id: "$detail.productName",
+
+            totalQuantity: {
+              $sum: "$detail.quantity",
+            },
+
+            totalAmountPaid: {
+              $sum: {
+                $multiply: ["$detail.quantity", "$detail.rate"],
+              },
+            },
+          },
+        },
+
+        //
+        // FORMAT RESPONSE
+        //
+
+        {
+          $project: {
+            _id: 0,
+            productName: "$_id",
+            totalQuantity: 1,
+            totalAmountPaid: 1,
+          },
+        },
+
+        //
+        // SORT
+        //
+
+        {
+          $sort: {
+            productName: 1,
+          },
+        },
+      ]);
+
+      return res.json(groupedProducts);
+    }
+
+    //
+    // INDIVIDUAL ORDERS
+    //
+
+    const orders = await Order.find(filter).sort({
+      acknowledgeAt: -1,
+    });
+
+    res.json(orders);
+  } catch (error) {
+    console.error("Paid Report Error:", error);
+
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
 // CREATE ORDER
 router.post("/", orderLimiter, async (req, res) => {
   try {
@@ -540,7 +663,7 @@ router.get("/", protect, async (req, res) => {
 // UPDATE ORDER STATUS
 router.put("/:id/status", protect, async (req, res) => {
   try {
-    const { status, deliveryBy } = req.body;
+    const { status, deliveryBy, acknowledgeBy } = req.body;
 
     //
     // VALIDATION
@@ -575,6 +698,21 @@ router.put("/:id/status", protect, async (req, res) => {
     }
 
     //
+    // PAID
+    //
+
+    if (status === "paid") {
+      if (!acknowledgeBy) {
+        return res.status(400).json({
+          message: "Acknowledge by is required",
+        });
+      }
+
+      updateData.acknowledgeBy = acknowledgeBy;
+      updateData.acknowledgeAt = new Date();
+    }
+
+    //
     // CANCELLED
     //
 
@@ -599,6 +737,7 @@ router.put("/:id/status", protect, async (req, res) => {
     res.json(updatedOrder);
   } catch (error) {
     console.error("Update Order Status Error:", error);
+
     res.status(500).json({
       message: error.message,
     });
