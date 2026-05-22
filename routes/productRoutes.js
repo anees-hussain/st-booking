@@ -38,9 +38,16 @@ router.get("/", protect, async (req, res) => {
 // GET Active PRODUCTS for public use
 router.get("/active", async (req, res) => {
   try {
-    const products = await Product.find({ isActive: true }).sort({
-      createdAt: -1,
-    });
+    const products = await Product.find({
+      isActive: true,
+    })
+      // .collation({
+      //   locale: "en",
+      //   strength: 2,
+      // })
+      .sort({
+        productName: 1,
+      });
 
     res.json(products);
   } catch (error) {
