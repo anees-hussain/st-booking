@@ -8,7 +8,15 @@ const protect = require("../middleware/authMiddleware");
 // CREATE PRODUCT
 router.post("/", protect, async (req, res) => {
   try {
-    const product = new Product(req.body);
+    // Get the product with the highest order
+    const lastProduct = await Product.findOne().sort({ order: -1 });
+
+    const nextOrder = lastProduct ? lastProduct.order + 1 : 1;
+
+    const product = new Product({
+      ...req.body,
+      order: nextOrder,
+    });
 
     const savedProduct = await product.save();
 
@@ -20,11 +28,44 @@ router.post("/", protect, async (req, res) => {
   }
 });
 
+router.patch("/reorder", protect, async (req, res) => {
+  try {
+    const updates = req.body;
+
+    if (!Array.isArray(updates)) {
+      return res.status(400).json({
+        message: "Invalid request body.",
+      });
+    }
+
+    const bulk = updates.map((item) => ({
+      updateOne: {
+        filter: { _id: item._id },
+        update: {
+          $set: {
+            order: item.order,
+          },
+        },
+      },
+    }));
+
+    await Product.bulkWrite(bulk);
+
+    res.json({
+      message: "Products reordered successfully.",
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: err.message,
+    });
+  }
+});
+
 // GET ALL PRODUCTS
 router.get("/", protect, async (req, res) => {
   try {
     const products = await Product.find().sort({
-      createdAt: -1,
+      order: -1,
     });
 
     res.json(products);
@@ -46,7 +87,7 @@ router.get("/active", async (req, res) => {
       //   strength: 2,
       // })
       .sort({
-        productName: 1,
+        order: -1,
       });
 
     res.json(products);
