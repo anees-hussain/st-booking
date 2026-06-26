@@ -158,6 +158,21 @@ router.get("/sellers", async (req, res) => {
   }
 });
 
+// GET ALL Delivery Men publicly accessible
+router.get("/delivery-men", async (req, res) => {
+  try {
+    const users = await User.find({ designation: "deliveryman" }).select(
+      "fullName _id",
+    );
+
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+});
+
 // GET SINGLE USER
 router.get("/:id", protect, async (req, res) => {
   try {
