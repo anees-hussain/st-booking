@@ -11,6 +11,7 @@ const protect = require("../middleware/authMiddleware");
 
 // GET ORDER SHEET
 router.get("/ordersheet", protect, async (req, res) => {
+
   try {
     //
     // FILTER OBJECT
@@ -32,12 +33,12 @@ router.get("/ordersheet", protect, async (req, res) => {
     // DATE FILTER
     //
 
-    if (req.query.date) {
-      const startDate = new Date(req.query.date);
+    if (req.query.startDate && req.query.endDate) {
+      const startDate = new Date(req.query.startDate);
 
       startDate.setHours(0, 0, 0, 0);
 
-      const endDate = new Date(req.query.date);
+      const endDate = new Date(req.query.endDate);
 
       endDate.setHours(23, 59, 59, 999);
 
@@ -77,6 +78,16 @@ router.get("/summary", protect, async (req, res) => {
     const { startDate, endDate, status, seller, deliveryBy } = req.query;
 
     //
+    // VALIDATE FILTERS
+    //
+
+    if (seller && deliveryBy) {
+      return res.status(400).json({
+        message: "Please use either seller or deliveryBy filter, not both.",
+      });
+    }
+
+    //
     // SAFE DATE CREATOR
     //
 
@@ -106,23 +117,7 @@ router.get("/summary", protect, async (req, res) => {
     // MATCH FILTER
     //
 
-    let matchStage = {};
-
-    //
-    // DATE FILTER
-    //
-
-    if (startDate || endDate) {
-      matchStage.createdAt = {};
-
-      if (startDate) {
-        matchStage.createdAt.$gte = createDate(startDate);
-      }
-
-      if (endDate) {
-        matchStage.createdAt.$lte = createDate(endDate, true);
-      }
-    }
+    const matchStage = {};
 
     //
     // STATUS FILTER
@@ -133,18 +128,32 @@ router.get("/summary", protect, async (req, res) => {
     }
 
     //
-    // SELLER FILTER
+    // DATE FILTER
+    // Paid orders are filtered using acknowledgeAt.
+    // All other statuses are filtered using createdAt.
+    //
+
+    const dateField = status === "paid" ? "acknowledgeAt" : "createdAt";
+
+    if (startDate || endDate) {
+      matchStage[dateField] = {};
+
+      if (startDate) {
+        matchStage[dateField].$gte = createDate(startDate);
+      }
+
+      if (endDate) {
+        matchStage[dateField].$lte = createDate(endDate, true);
+      }
+    }
+
+    //
+    // SELLER / DELIVERY FILTER
     //
 
     if (seller) {
       matchStage.seller = seller;
-    }
-
-    //
-    // DELIVERY FILTER
-    //
-
-    if (deliveryBy) {
+    } else if (deliveryBy) {
       matchStage.deliveryBy = deliveryBy;
     }
 
@@ -183,9 +192,7 @@ router.get("/summary", protect, async (req, res) => {
         $group: {
           _id: {
             productId: "$detail.productId",
-
             productName: "$detail.productName",
-
             uom: "$detail.uom",
           },
 
@@ -224,17 +231,11 @@ router.get("/summary", protect, async (req, res) => {
       {
         $project: {
           _id: 0,
-
           productId: "$_id.productId",
-
           productName: "$_id.productName",
-
           uom: "$_id.uom",
-
           totalQuantity: 1,
-
           totalAmount: 1,
-
           totalOrders: {
             $size: "$orders",
           },
